@@ -53,7 +53,7 @@ let map_page () =
 	Unix.close fd;
 	page_opt
 
-let eventchn =
+let open_eventchn () =
 	let e = match Xenstore.xc_evtchn_open () with
 		| None -> failwith "xc_evtchn_open failed"
 		| Some e -> e in
@@ -136,8 +136,17 @@ let eventchn =
 	let (_: unit Lwt.t) = virq_thread () in
 	e
 
+let singleton_eventchn = ref None
+let get_eventchn () = match !singleton_eventchn with
+  | Some e -> e
+  | None ->
+    let e = open_eventchn () in
+    singleton_eventchn := Some e;
+    e
+
 let create_dom0 () =
 	lwt remote_port = read_port () in
+	let eventchn = get_eventchn () in
 	match map_page () with
 		| Some page ->
 			let port = match Xenstore.xc_evtchn_bind_interdomain eventchn 0 remote_port with
@@ -167,6 +176,7 @@ let create_dom0 () =
 
 let create_domU address =
 	lwt page = Xenstore.map_foreign address.domid address.mfn in
+	let eventchn = get_eventchn () in
 	let port = match Xenstore.xc_evtchn_bind_interdomain eventchn address.domid address.remote_port with
 		| Some x -> x
 		| None ->
@@ -194,6 +204,7 @@ let rec read t buf ofs len =
 			lwt () = Lwt_condition.wait t.c in
 			read t buf ofs len
 		end else begin
+			let eventchn = get_eventchn () in
 			Xenstore.xc_evtchn_notify eventchn t.port;
 			return n
 		end
@@ -203,6 +214,7 @@ let rec write t buf ofs len =
 	then fail Ring_shutdown
 	else
 		let n = Xenstore_ring.Ring.Back.unsafe_write t.ring buf ofs len in
+		let eventchn = get_eventchn () in
 		if n > 0 then Xenstore.xc_evtchn_notify eventchn t.port;
 		if n < len then begin
 			lwt () = Lwt_condition.wait t.c in
@@ -210,6 +222,7 @@ let rec write t buf ofs len =
 		end else return ()
 
 let destroy t =
+	let eventchn = get_eventchn () in
 	Xenstore.xc_evtchn_unbind eventchn t.port;
 	Xenstore.unmap_foreign t.page;
 	Hashtbl.remove domains t.address.domid;
