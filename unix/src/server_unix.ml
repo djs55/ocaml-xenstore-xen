@@ -113,8 +113,13 @@ let info =
   let doc = "User-space xenstore server" in
   let man = [
     `S "DESCRIPTION";
-    `P "The xenstore service allows Virtual Machines running on top of the Xen hypervisor to share configuration information and setup high-bandwidth shared-memory communication channels for disk and network IP.";
-    `P "The xenstore service provides a tree of key, value pairs which may be transactionally updated over a simple wire protocol. Traditionally the service exposes the protocol both over a Unix domain socket (for convenience in domain zero) and over shared memory rings. Note that it is also possible to run xenstore as a xen kernel, for enhanced isolation: see the ocaml-xenstore-xen/xen frontend.";
+    `P "The xenstore service allows Virtual Machines running on top of the Xen hypervisor to share configuration information and setup high-bandwidth shared-memory communication channels for disk and network IO.";
+    `P "The xenstore service provides a tree of key=value pairs which may be transactionally updated over a simple wire protocol. Traditionally the service exposes the protocol both over a Unix domain socket (for convenience in domain zero) and over shared memory rings. Note that it is also possible to run xenstore as a xen kernel, for enhanced isolation: see the ocaml-xenstore-xen/xen frontend.";
+    `S "EXAMPLES";
+    `P "To run as the main xenstore service on a xen host:";
+    `P "  $(tname) --daemon --enable-xen --enable-unix";
+    `P "To run in userspace only in the foreground for testing on an arbitrary host:";
+    `P "  $(tname) --enable-unix --path ./mysocket";
     `S "BUGS";
     `P "Please report bugs at https://github.com/xapi-project/ocaml-xenstore-xen"
   ] in
