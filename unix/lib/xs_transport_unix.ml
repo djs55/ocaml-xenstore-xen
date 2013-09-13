@@ -77,10 +77,19 @@ let _ =
 let listen () =
   let sockaddr = Lwt_unix.ADDR_UNIX(!xenstored_socket) in
   let fd = Lwt_unix.socket Lwt_unix.PF_UNIX Lwt_unix.SOCK_STREAM 0 in
-  lwt () = try_lwt Lwt_unix.unlink !xenstored_socket with _ -> return () in
-  Lwt_unix.bind fd sockaddr;
-  Lwt_unix.listen fd 5;
-  return fd
+  try_lwt
+    lwt () = try_lwt Lwt_unix.unlink !xenstored_socket with _ -> return () in
+    Lwt_unix.bind fd sockaddr;
+    Lwt_unix.listen fd 5;
+    return fd
+  with Unix.Unix_error(Unix.EACCES, _, _) as e ->
+    error "Permission denied (EACCES) binding to %s" !xenstored_socket;
+    error "To resolve this problem either run this program with more privileges or change the path.";
+    fail e
+  | Unix.Unix_error(Unix.EADDRINUSE, _, _) as e ->
+    error "The unix domain socket %s is already in use (EADDRINUSE)" !xenstored_socket;
+    error "To resolve this program either run this program with more privileges (so that it may delete the current socket) or change the path.";
+    fail e
 
 let rec accept_forever fd process =
   lwt conns, _ (*exn_option*) = Lwt_unix.accept_n fd 16 in
