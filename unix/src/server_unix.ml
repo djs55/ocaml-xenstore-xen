@@ -15,8 +15,6 @@
 open Lwt
 open Xs_protocol
 
-let version = "1.9.9"
-
 let debug fmt = Xenstore_server.Logging.debug "xenstored" fmt
 let info  fmt = Xenstore_server.Logging.info  "xenstored" fmt
 let error fmt = Xenstore_server.Logging.error "xenstored" fmt
@@ -70,7 +68,7 @@ let ensure_directory_exists dir_needed =
 
 let program_thread daemon path pidfile enable_xen enable_unix =
 
-  info "User-space xenstored version %s starting" version;
+  info "User-space xenstored version %s starting" Version.version;
   let (_: 'a) = logging_thread daemon Xenstore_server.Logging.logger in
   let (_: 'a) = logging_thread daemon Xenstore_server.Logging.access_logger in
 
@@ -145,7 +143,7 @@ let info =
     `S "BUGS";
     `P "Please report bugs at https://github.com/xapi-project/ocaml-xenstore-xen"
   ] in
-  Term.info "xenstored" ~version ~doc ~man
+  Term.info "xenstored" ~version:Version.version ~doc ~man
 
 let () = match Term.eval (program_t, info) with
   | `Ok () -> exit 0
