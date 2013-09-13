@@ -83,12 +83,12 @@ let listen () =
     Lwt_unix.listen fd 5;
     return fd
   with Unix.Unix_error(Unix.EACCES, _, _) as e ->
-    Printf.fprintf stderr "Permission denied (EACCES) binding to %s\n" !xenstored_socket;
-    Printf.fprintf stderr "To resolve this problem either run this program with more privileges or change the path.\n";
+    error "Permission denied (EACCES) binding to %s" !xenstored_socket;
+    error "To resolve this problem either run this program with more privileges or change the path.";
     fail e
   | Unix.Unix_error(Unix.EADDRINUSE, _, _) as e ->
-    Printf.fprintf stderr "The unix domain socket %s is already in use (EADDRINUSE)\n" !xenstored_socket;
-    Printf.fprintf stderr "To resolve this program either run this program with more privileges (so that it may delete the current socket) or change the path.\n%!";
+    error "The unix domain socket %s is already in use (EADDRINUSE)" !xenstored_socket;
+    error "To resolve this program either run this program with more privileges (so that it may delete the current socket) or change the path.";
     fail e
 
 let rec accept_forever fd process =
