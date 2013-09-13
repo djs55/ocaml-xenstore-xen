@@ -17,7 +17,8 @@ open Xs_protocol
 
 let version = "1.9.9"
 
-let debug fmt = Xenstore_server.Logging.debug "server_unix" fmt
+let debug fmt = Xenstore_server.Logging.debug "xenstored" fmt
+let error fmt = Xenstore_server.Logging.debug "xenstored" fmt
 
 module UnixServer = Xenstore_server.Xs_server.Server(Xs_transport_unix)
 module DomainServer = Xenstore_server.Xs_server.Server(Xs_transport_xen)
@@ -62,11 +63,19 @@ let enable_unix =
   let doc = "Provide service locally over a Unix domain socket" in
   Arg.(value & flag & info [ "enable-unix" ] ~docv:"UNIX" ~doc)
 
-let program_thread daemon pidfile enable_xen enable_unix =
+let program_thread daemon path pidfile enable_xen enable_unix =
 
   debug "User-space xenstored version %s starting" version;
   let (_: 'a) = logging_thread Xenstore_server.Logging.logger in
   let (_: 'a) = logging_thread Xenstore_server.Logging.access_logger in
+
+  lwt () = if enable_unix then begin
+    let dir_needed = Filename.dirname path in
+    if not(Sys.file_exists dir_needed && (Sys.is_directory dir_needed)) then begin
+      error "The directory where the socket should be created (%s) doesn't exist.\n" dir_needed;
+      fail (Failure "socket directory does not exist")
+    end else return ()
+  end else return () in
 
   lwt () = if daemon then begin
     debug "Writing pidfile %s" pidfile;
@@ -96,17 +105,10 @@ let program_thread daemon pidfile enable_xen enable_unix =
   return ()
 
 let program pidfile daemon path enable_xen enable_unix =
-  if enable_unix then begin
-    let dir_needed = Filename.dirname path in
-    if not(Sys.file_exists dir_needed && (Sys.is_directory dir_needed)) then begin
-      Printf.fprintf stderr "The directory where the socket should be created (%s) doesn't exist.\n" dir_needed;
-      exit 1;
-    end
-  end;
   Xs_transport_unix.xenstored_socket := path;
   if daemon then Lwt_daemon.daemonize ();
   try
-    Lwt_main.run (program_thread daemon pidfile enable_xen enable_unix)
+    Lwt_main.run (program_thread daemon path pidfile enable_xen enable_unix)
   with e ->
     exit 1
 

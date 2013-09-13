@@ -21,6 +21,7 @@ let ( >>= ) m f = m >>= f
 open Xenstore_server.Introduce
 
 let debug fmt = Xenstore_server.Logging.debug "xs_transport_xen" fmt
+let error fmt = Xenstore_server.Logging.error "xs_transport_xen" fmt
 
 type channel = {
 	address: address;
@@ -48,12 +49,12 @@ let read_port () =
         return (int_of_string line)
       )
   with Unix.Unix_error(Unix.EACCES, _, _) as e->
-    Printf.fprintf stderr "Failed to open %s (EACCES)\n" xenstored_proc_port;
-    Printf.fprintf stderr "Ensure this program is running as root and try again.\n";
+    error "Failed to open %s (EACCES)" xenstored_proc_port;
+    error "Ensure this program is running as root and try again.";
     fail e
   | Unix.Unix_error(Unix.ENOENT, _, _) as e ->
-    Printf.fprintf stderr "Failed to open %s (ENOENT)\n" xenstored_proc_port;
-    Printf.fprintf stderr "Ensure this system is running xen and try again.\n";
+    error "Failed to open %s (ENOENT)" xenstored_proc_port;
+    error "Ensure this system is running xen and try again.";
     fail e
 
 let map_page () =
