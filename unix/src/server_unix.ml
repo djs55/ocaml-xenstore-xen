@@ -105,7 +105,10 @@ let program pidfile daemon path enable_xen enable_unix =
   end;
   Xs_transport_unix.xenstored_socket := path;
   if daemon then Lwt_daemon.daemonize ();
-  Lwt_main.run (program_thread daemon pidfile enable_xen enable_unix)
+  try
+    Lwt_main.run (program_thread daemon pidfile enable_xen enable_unix)
+  with e ->
+    exit 1
 
 let program_t = Term.(pure program $ pidfile $ daemon $ path $ enable_xen $ enable_unix)
 
@@ -126,6 +129,6 @@ let info =
   Term.info "xenstored" ~version ~doc ~man
 
 let () = match Term.eval (program_t, info) with
-  | `Error _ -> exit 1
-  | _ -> exit 0
+  | `Ok () -> exit 0
+  | _ -> exit 1
 
