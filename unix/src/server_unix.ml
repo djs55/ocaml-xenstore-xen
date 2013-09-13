@@ -18,7 +18,7 @@ open Xs_protocol
 let version = "1.9.9"
 
 let debug fmt = Xenstore_server.Logging.debug "xenstored" fmt
-let error fmt = Xenstore_server.Logging.debug "xenstored" fmt
+let error fmt = Xenstore_server.Logging.error "xenstored" fmt
 
 module UnixServer = Xenstore_server.Xs_server.Server(Xs_transport_unix)
 module DomainServer = Xenstore_server.Xs_server.Server(Xs_transport_xen)
@@ -68,6 +68,11 @@ let program_thread daemon path pidfile enable_xen enable_unix =
   debug "User-space xenstored version %s starting" version;
   let (_: 'a) = logging_thread Xenstore_server.Logging.logger in
   let (_: 'a) = logging_thread Xenstore_server.Logging.access_logger in
+
+  lwt () = if not enable_xen && (not enable_unix) then begin
+    error "You must specify at least one transport (--enable-unix and/or --enable-xen)";
+    fail (Failure "no transports specified")
+  end else return () in
 
   lwt () = if enable_unix then begin
     let dir_needed = Filename.dirname path in
