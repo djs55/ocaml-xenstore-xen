@@ -41,11 +41,20 @@ let xenstored_proc_port = "/proc/xen/xsd_port"
 let xenstored_proc_kva  = "/proc/xen/xsd_kva"
 
 let read_port () =
-	Lwt_io.with_file ~mode:Lwt_io.input xenstored_proc_port
-		(fun ic ->
-			lwt line = Lwt_io.read_line ic in
-			return (int_of_string line)
-		)
+  try_lwt
+    Lwt_io.with_file ~mode:Lwt_io.input xenstored_proc_port
+      (fun ic ->
+        lwt line = Lwt_io.read_line ic in
+        return (int_of_string line)
+      )
+  with Unix.Unix_error(Unix.EACCES, _, _) as e->
+    Printf.fprintf stderr "Failed to open %s (EACCES)\n" xenstored_proc_port;
+    Printf.fprintf stderr "Ensure this program is running as root and try again.\n";
+    fail e
+  | Unix.Unix_error(Unix.ENOENT, _, _) as e ->
+    Printf.fprintf stderr "Failed to open %s (ENOENT)\n" xenstored_proc_port;
+    Printf.fprintf stderr "Ensure this system is running xen and try again.\n";
+    fail e
 
 let map_page () =
 	let fd = Unix.openfile xenstored_proc_kva [ Lwt_unix.O_RDWR ] 0o0 in
