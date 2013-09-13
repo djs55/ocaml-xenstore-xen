@@ -18,26 +18,25 @@ open Xs_protocol
 let version = "1.9.9"
 
 let debug fmt = Xenstore_server.Logging.debug "xenstored" fmt
+let info  fmt = Xenstore_server.Logging.info  "xenstored" fmt
 let error fmt = Xenstore_server.Logging.error "xenstored" fmt
 
 module UnixServer = Xenstore_server.Xs_server.Server(Xs_transport_unix)
 module DomainServer = Xenstore_server.Xs_server.Server(Xs_transport_xen)
 
-let syslog = Lwt_log.syslog ~facility:`Local3 ()
+let syslog = Lwt_log.syslog ~facility:`Daemon ()
 
-let daemon = ref false
-
-let rec logging_thread logger =
+let rec logging_thread daemon logger =
   lwt lines = Xenstore_server.Logging.get logger in
   lwt () = Lwt_list.iter_s
     (fun x ->
       lwt () =
-        if !daemon
+        if daemon
         then Lwt_log.log ~logger:syslog ~level:Lwt_log.Notice x
         else Lwt_io.write_line Lwt_io.stdout x in
         return ()
     ) lines in
-  logging_thread logger
+  logging_thread daemon logger
 
 let default_pidfile = "/var/run/xenstored.pid"
 
@@ -63,43 +62,56 @@ let enable_unix =
   let doc = "Provide service locally over a Unix domain socket" in
   Arg.(value & flag & info [ "enable-unix" ] ~docv:"UNIX" ~doc)
 
+let ensure_directory_exists dir_needed =
+    if not(Sys.file_exists dir_needed && (Sys.is_directory dir_needed)) then begin
+      error "The directory (%s) doesn't exist.\n" dir_needed;
+      fail (Failure "directory does not exist")
+    end else return ()
+
 let program_thread daemon path pidfile enable_xen enable_unix =
 
-  debug "User-space xenstored version %s starting" version;
-  let (_: 'a) = logging_thread Xenstore_server.Logging.logger in
-  let (_: 'a) = logging_thread Xenstore_server.Logging.access_logger in
+  info "User-space xenstored version %s starting" version;
+  let (_: 'a) = logging_thread daemon Xenstore_server.Logging.logger in
+  let (_: 'a) = logging_thread daemon Xenstore_server.Logging.access_logger in
 
   lwt () = if not enable_xen && (not enable_unix) then begin
     error "You must specify at least one transport (--enable-unix and/or --enable-xen)";
     fail (Failure "no transports specified")
   end else return () in
 
-  lwt () = if enable_unix then begin
-    let dir_needed = Filename.dirname path in
-    if not(Sys.file_exists dir_needed && (Sys.is_directory dir_needed)) then begin
-      error "The directory where the socket should be created (%s) doesn't exist.\n" dir_needed;
-      fail (Failure "socket directory does not exist")
-    end else return ()
-  end else return () in
+  lwt () =
+    if enable_unix
+    then ensure_directory_exists (Filename.dirname path)
+    else return () in
+
+  lwt () =
+    if daemon
+    then ensure_directory_exists (Filename.dirname pidfile)
+    else return () in
 
   lwt () = if daemon then begin
-    debug "Writing pidfile %s" pidfile;
-    (try Unix.unlink pidfile with _ -> ());
-    let pid = Unix.getpid () in
-    lwt _ = Lwt_io.with_file pidfile ~mode:Lwt_io.output (fun chan -> Lwt_io.fprintlf chan "%d" pid) in
-    return ()
+    try_lwt
+      debug "Writing pidfile %s" pidfile;
+      (try Unix.unlink pidfile with _ -> ());
+      let pid = Unix.getpid () in
+      lwt _ = Lwt_io.with_file pidfile ~mode:Lwt_io.output (fun chan -> Lwt_io.fprintlf chan "%d" pid) in
+      return ()
+    with Unix.Unix_error(Unix.EACCES, _, _) ->
+      error "Permission denied (EACCES) writing pidfile %s" pidfile;
+      error "Try a new --pidfile path or running this program with more privileges";
+      fail (Failure "EACCES writing pidfile")
   end else begin
     debug "We are not daemonising so no need for a pidfile.";
     return ()
   end in
   let (a: unit Lwt.t) =
     if enable_unix then begin
-      debug "Starting server on unix domain socket %s" !Xs_transport_unix.xenstored_socket;
+      info "Starting server on unix domain socket %s" !Xs_transport_unix.xenstored_socket;
       UnixServer.serve_forever ()
     end else return () in
   let (b: unit Lwt.t) =
     if enable_xen then begin
-      debug "Starting server on xen inter-domain transport";
+      info "Starting server on xen inter-domain transport";
       DomainServer.serve_forever ()
     end else return () in
   Xenstore_server.Introduce.(introduce { domid = 0; mfn = 0n; remote_port = 0 });
