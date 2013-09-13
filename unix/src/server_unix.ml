@@ -15,6 +15,8 @@
 open Lwt
 open Xs_protocol
 
+let version = "1.9.9"
+
 let debug fmt = Xenstore_server.Logging.debug "server_unix" fmt
 
 module UnixServer = Xenstore_server.Xs_server.Server(Xs_transport_unix)
@@ -36,40 +38,89 @@ let rec logging_thread logger =
     ) lines in
   logging_thread logger
 
-let pidfile = ref "/var/run/xenstored.pid"
+let default_pidfile = "/var/run/xenstored.pid"
 
-let main () =
-  debug "Unix xenstored starting";
+open Cmdliner
+
+let pidfile =
+  let doc = "The path to the pidfile, if running as a daemon" in
+  Arg.(value & opt string default_pidfile & info [ "pidfile" ] ~docv:"PIDFILE" ~doc)
+
+let daemon =
+  let doc = "Run as a daemon" in
+  Arg.(value & flag & info [ "daemon" ] ~docv:"DAEMON" ~doc)
+
+let path =
+  let doc = "The path to the Unix domain socket" in
+  Arg.(value & opt string !Xs_transport_unix.xenstored_socket & info [ "path" ] ~docv:"PATH" ~doc)
+
+let enable_xen =
+  let doc = "Provide service to VMs over shared memory" in
+  Arg.(value & flag & info [ "enable-xen" ] ~docv:"XEN" ~doc)
+
+let enable_unix =
+  let doc = "Provide service locally over a Unix domain socket" in
+  Arg.(value & flag & info [ "enable-unix" ] ~docv:"UNIX" ~doc)
+
+let program_thread daemon pidfile enable_xen enable_unix =
+
+  debug "User-space xenstored version %s starting" version;
   let (_: 'a) = logging_thread Xenstore_server.Logging.logger in
   let (_: 'a) = logging_thread Xenstore_server.Logging.access_logger in
 
-  debug "Writing pidfile %s" !pidfile;
-  (try Unix.unlink !pidfile with _ -> ());
-  let pid = Unix.getpid () in
-  lwt _ = Lwt_io.with_file !pidfile ~mode:Lwt_io.output (fun chan -> Lwt_io.fprintlf chan "%d" pid) in
-
-  let (a: unit Lwt.t) = UnixServer.serve_forever () in
-  debug "Started server on unix domain socket";
-  let (b: unit Lwt.t) = DomainServer.serve_forever () in
-  debug "Started server on xen inter-domain transport";
+  lwt () = if daemon then begin
+    debug "Writing pidfile %s" pidfile;
+    (try Unix.unlink pidfile with _ -> ());
+    let pid = Unix.getpid () in
+    lwt _ = Lwt_io.with_file pidfile ~mode:Lwt_io.output (fun chan -> Lwt_io.fprintlf chan "%d" pid) in
+    return ()
+  end else begin
+    debug "We are not daemonising so no need for a pidfile.";
+    return ()
+  end in
+  let (a: unit Lwt.t) =
+    if enable_unix then begin
+      debug "Starting server on unix domain socket %s" !Xs_transport_unix.xenstored_socket;
+      UnixServer.serve_forever ()
+    end else return () in
+  let (b: unit Lwt.t) =
+    if enable_xen then begin
+      debug "Starting server on xen inter-domain transport";
+      DomainServer.serve_forever ()
+    end else return () in
   Xenstore_server.Introduce.(introduce { domid = 0; mfn = 0n; remote_port = 0 });
   debug "Introduced domain 0";
   lwt () = a in
   lwt () = b in
+  debug "No running transports, shutting down.";
   return ()
 
-let _ =
-  Arg.parse [
-    "-path", Arg.Set_string Xs_transport_unix.xenstored_socket, Printf.sprintf "Unix domain socket to listen on (default %s)" !Xs_transport_unix.xenstored_socket;
-    "-pidfile", Arg.Set_string pidfile, Printf.sprintf "File to write PID (default %s)" !pidfile;
-    "-daemon", Arg.Set daemon, Printf.sprintf "True if we should daemonize (default %b)" !daemon;
-   ]
-  (fun _ -> ())
-  "User-space xenstore service";
-  let dir_needed = Filename.dirname !Xs_transport_unix.xenstored_socket in
-  if not(Sys.file_exists dir_needed && (Sys.is_directory dir_needed)) then begin
-    Printf.fprintf stderr "The directory where the socket should be created (%s) doesn't exist.\n" dir_needed;
-    exit 1;
+let program pidfile daemon path enable_xen enable_unix =
+  if enable_unix then begin
+    let dir_needed = Filename.dirname path in
+    if not(Sys.file_exists dir_needed && (Sys.is_directory dir_needed)) then begin
+      Printf.fprintf stderr "The directory where the socket should be created (%s) doesn't exist.\n" dir_needed;
+      exit 1;
+    end
   end;
-  if !daemon then Lwt_daemon.daemonize ();
-  Lwt_main.run (main ())
+  Xs_transport_unix.xenstored_socket := path;
+  if daemon then Lwt_daemon.daemonize ();
+  Lwt_main.run (program_thread daemon pidfile enable_xen enable_unix)
+
+let program_t = Term.(pure program $ pidfile $ daemon $ path $ enable_xen $ enable_unix)
+
+let info =
+  let doc = "User-space xenstore server" in
+  let man = [
+    `S "DESCRIPTION";
+    `P "The xenstore service allows Virtual Machines running on top of the Xen hypervisor to share configuration information and setup high-bandwidth shared-memory communication channels for disk and network IP.";
+    `P "The xenstore service provides a tree of key, value pairs which may be transactionally updated over a simple wire protocol. Traditionally the service exposes the protocol both over a Unix domain socket (for convenience in domain zero) and over shared memory rings. Note that it is also possible to run xenstore as a xen kernel, for enhanced isolation: see the ocaml-xenstore-xen/xen frontend.";
+    `S "BUGS";
+    `P "Please report bugs at https://github.com/xapi-project/ocaml-xenstore-xen"
+  ] in
+  Term.info "xenstored" ~version ~doc ~man
+
+let () = match Term.eval (program_t, info) with
+  | `Error _ -> exit 1
+  | _ -> exit 0
+

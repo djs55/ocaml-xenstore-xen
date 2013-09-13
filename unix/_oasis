@@ -24,7 +24,7 @@ Executable server_unix
   MainIs:             server_unix.ml
   Custom:             true
   Install:            false
-  BuildDepends:       lwt, lwt.unix, xenstore, xenstore.server, xenstore_server_unix
+  BuildDepends:       lwt, lwt.unix, xenstore, xenstore.server, xenstore_server_unix, cmdliner
 
 #Executable dbgring
 #  CompiledObject:     best
