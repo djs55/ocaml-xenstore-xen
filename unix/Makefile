@@ -13,7 +13,7 @@ setup.bin: setup.ml
 setup.data: setup.bin
 	@./setup.bin -configure
 
-build: setup.data setup.bin
+build: setup.data setup.bin src/version.ml
 	@./setup.bin -build -j $(J)
 
 doc: setup.data setup.bin
@@ -24,6 +24,9 @@ install: setup.bin
 
 test: setup.bin build
 	@./setup.bin -test
+
+src/version.ml: VERSION
+	echo let version=\"$(shell cat VERSION)\" > src/version.ml
 
 reinstall: setup.bin
 	@ocamlfind remove $(NAME) || true

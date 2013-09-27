@@ -21,6 +21,7 @@ let ( >>= ) m f = m >>= f
 open Xenstore_server.Introduce
 
 let debug fmt = Xenstore_server.Logging.debug "xs_transport_xen" fmt
+let error fmt = Xenstore_server.Logging.error "xs_transport_xen" fmt
 
 type channel = {
 	address: address;
@@ -41,11 +42,20 @@ let xenstored_proc_port = "/proc/xen/xsd_port"
 let xenstored_proc_kva  = "/proc/xen/xsd_kva"
 
 let read_port () =
-	Lwt_io.with_file ~mode:Lwt_io.input xenstored_proc_port
-		(fun ic ->
-			lwt line = Lwt_io.read_line ic in
-			return (int_of_string line)
-		)
+  try_lwt
+    Lwt_io.with_file ~mode:Lwt_io.input xenstored_proc_port
+      (fun ic ->
+        lwt line = Lwt_io.read_line ic in
+        return (int_of_string line)
+      )
+  with Unix.Unix_error(Unix.EACCES, _, _) as e->
+    error "Failed to open %s (EACCES)" xenstored_proc_port;
+    error "Ensure this program is running as root and try again.";
+    fail e
+  | Unix.Unix_error(Unix.ENOENT, _, _) as e ->
+    error "Failed to open %s (ENOENT)" xenstored_proc_port;
+    error "Ensure this system is running xen and try again.";
+    fail e
 
 let map_page () =
 	let fd = Unix.openfile xenstored_proc_kva [ Lwt_unix.O_RDWR ] 0o0 in
@@ -53,7 +63,7 @@ let map_page () =
 	Unix.close fd;
 	page_opt
 
-let eventchn =
+let open_eventchn () =
 	let e = match Xenstore.xc_evtchn_open () with
 		| None -> failwith "xc_evtchn_open failed"
 		| Some e -> e in
@@ -136,8 +146,17 @@ let eventchn =
 	let (_: unit Lwt.t) = virq_thread () in
 	e
 
+let singleton_eventchn = ref None
+let get_eventchn () = match !singleton_eventchn with
+  | Some e -> e
+  | None ->
+    let e = open_eventchn () in
+    singleton_eventchn := Some e;
+    e
+
 let create_dom0 () =
 	lwt remote_port = read_port () in
+	let eventchn = get_eventchn () in
 	match map_page () with
 		| Some page ->
 			let port = match Xenstore.xc_evtchn_bind_interdomain eventchn 0 remote_port with
@@ -167,6 +186,7 @@ let create_dom0 () =
 
 let create_domU address =
 	lwt page = Xenstore.map_foreign address.domid address.mfn in
+	let eventchn = get_eventchn () in
 	let port = match Xenstore.xc_evtchn_bind_interdomain eventchn address.domid address.remote_port with
 		| Some x -> x
 		| None ->
@@ -194,6 +214,7 @@ let rec read t buf ofs len =
 			lwt () = Lwt_condition.wait t.c in
 			read t buf ofs len
 		end else begin
+			let eventchn = get_eventchn () in
 			Xenstore.xc_evtchn_notify eventchn t.port;
 			return n
 		end
@@ -203,6 +224,7 @@ let rec write t buf ofs len =
 	then fail Ring_shutdown
 	else
 		let n = Xenstore_ring.Ring.Back.unsafe_write t.ring buf ofs len in
+		let eventchn = get_eventchn () in
 		if n > 0 then Xenstore.xc_evtchn_notify eventchn t.port;
 		if n < len then begin
 			lwt () = Lwt_condition.wait t.c in
@@ -210,6 +232,7 @@ let rec write t buf ofs len =
 		end else return ()
 
 let destroy t =
+	let eventchn = get_eventchn () in
 	Xenstore.xc_evtchn_unbind eventchn t.port;
 	Xenstore.unmap_foreign t.page;
 	Hashtbl.remove domains t.address.domid;
